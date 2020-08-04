@@ -4,6 +4,16 @@
 
 This repository contains code for the ACL 2017 paper *[Get To The Point: Summarization with Pointer-Generator Networks](https://arxiv.org/abs/1704.04368)*. For an intuitive overview of the paper, read the [blog post](http://www.abigailsee.com/2017/04/16/taming-rnns-for-better-summarization.html).
 
+## Instructions on optimize the hyperparameter
+* You need `tensorflow==1.0.0` and `python2.7` to train the model and `pyrouge` and `ROUGE` to evaluate the results.
+
+* The model training and evaluating with only the loss function do not depend on `pyrouge`, so if you have trouble installing `ROUGE`, you may still train the model without it (remenber to comment out the pyrouge import line in `decode.py`)
+
+* The hyperparameters used in this model can be easily setted up using argparser when running the code in command line. (see `run_summarization.py` for more info about the HP.)
+
+* The train mode will repeat the training step until interrupted, so if you want to set up some the termination condition, please check `run_training()` in `run_summarization.py` to keep track of the loss.
+
+
 ## Looking for test set output?
 The test set output of the models described in the paper can be found [here](https://drive.google.com/file/d/0B7pQmm-OfDv7MEtMVU5sOHc5LTg/view?usp=sharing).
 
@@ -33,6 +43,9 @@ Tensorflow 1.0's [new seq2seq library](https://www.tensorflow.org/api_guides/pyt
 ## How to run
 
 ### Get the dataset
+
+**PS : we already have the dataset in `./finished_flies`**
+
 To obtain the CNN / Daily Mail dataset, follow the instructions [here](https://github.com/abisee/cnn-dailymail). Once finished, you should have [chunked](https://github.com/abisee/cnn-dailymail/issues/3) datafiles `train_000.bin`, ..., `train_287.bin`, `val_000.bin`, ..., `val_013.bin`, `test_000.bin`, ..., `test_011.bin` (each contains 1000 examples) and a vocabulary file `vocab`.
 
 **Note**: If you did this before 7th May 2017, follow the instructions [here](https://github.com/abisee/cnn-dailymail/issues/2) to correct a bug in the process.
@@ -43,6 +56,13 @@ To train your model, run:
 ```
 python run_summarization.py --mode=train --data_path=/path/to/chunked/train_* --vocab_path=/path/to/vocab --log_root=/path/to/a/log/directory --exp_name=myexperiment
 ```
+
+
+for example : 
+```
+python run_summarization.py --mode=train --data_path=./finished_files/chunked/train_* --vocab_path=./finished_files/vocab --log_root=./log --exp_name=first_try
+```
+
 
 This will create a subdirectory of your specified `log_root` called `myexperiment` where all checkpoints and other data will be saved. Then the model will start training using the `train_*.bin` files as training data.
 
@@ -56,6 +76,11 @@ You may want to run a concurrent evaluation job, that runs your model on the val
 ```
 python run_summarization.py --mode=eval --data_path=/path/to/chunked/val_* --vocab_path=/path/to/vocab --log_root=/path/to/a/log/directory --exp_name=myexperiment
 ```
+for example : 
+```
+python run_summarization.py --mode=eval --data_path=./finished_files/chunked/val_* --vocab_path=./finished_files/vocab --log_root=./log --exp_name=first_try
+```
+
 
 Note: you want to run the above command using the same settings you entered for your training job.
 

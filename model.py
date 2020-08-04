@@ -133,15 +133,16 @@ class SummarizationModel(object):
       attn_dists: A list of tensors; the attention distributions
       p_gens: A list of tensors shape (batch_size, 1); the generation probabilities
       coverage: A tensor, the current coverage vector
+      context_vectors: list of weighted sum of encoder_states
     """
     hps = self._hps
     cell = tf.contrib.rnn.LSTMCell(hps.hidden_dim, state_is_tuple=True, initializer=self.rand_unif_init)
 
     prev_coverage = self.prev_coverage if hps.mode=="decode" and hps.coverage else None # In decode mode, we run attention_decoder one step at a time and so need to pass in the previous step's coverage vector each time
 
-    outputs, out_state, attn_dists, p_gens, coverage = attention_decoder(inputs, self._dec_in_state, self._enc_states, self._enc_padding_mask, cell, initial_state_attention=(hps.mode=="decode"), pointer_gen=hps.pointer_gen, use_coverage=hps.coverage, prev_coverage=prev_coverage)
+    outputs, out_state, attn_dists, p_gens, coverage, context_vectors = attention_decoder(inputs, self._dec_in_state, self._enc_states, self._enc_padding_mask, cell, initial_state_attention=(hps.mode=="decode"), pointer_gen=hps.pointer_gen, use_coverage=hps.coverage, prev_coverage=prev_coverage)
 
-    return outputs, out_state, attn_dists, p_gens, coverage
+    return outputs, out_state, attn_dists, p_gens, coverage, context_vectors
 
   def _calc_final_dist(self, vocab_dists, attn_dists):
     """Calculate the final distribution, for the pointer-generator model
@@ -222,7 +223,7 @@ class SummarizationModel(object):
 
       # Add the decoder.
       with tf.variable_scope('decoder'):
-        decoder_outputs, self._dec_out_state, self.attn_dists, self.p_gens, self.coverage = self._add_decoder(emb_dec_inputs)
+        decoder_outputs, self._dec_out_state, self.attn_dists, self.p_gens, self.coverage, self.context_vectors = self._add_decoder(emb_dec_inputs)
 
       # Add the output projection to obtain the vocabulary distribution
       with tf.variable_scope('output_projection'):
@@ -277,7 +278,7 @@ class SummarizationModel(object):
             self._total_loss = self._loss + hps.cov_loss_wt * self._coverage_loss
             tf.summary.scalar('total_loss', self._total_loss)
 
-    if hps.mode == "decode":
+    if hps.mode == "decode" and not FLAGS.extract_contextvec:
       # We run decode beam search mode one decoder step at a time
       assert len(final_dists)==1 # final_dists is a singleton list containing shape (batch_size, extended_vsize)
       final_dists = final_dists[0]
@@ -330,6 +331,14 @@ class SummarizationModel(object):
     }
     if self._hps.coverage:
       to_return['coverage_loss'] = self._coverage_loss
+    return sess.run(to_return, feed_dict)
+
+  def run_extract_contextvec_step(self, sess, batch):
+    """Runs encoder to get context vectors"""
+    feed_dict = self._make_feed_dict(batch)
+    to_return = {
+      'context vectors': self.context_vectors,
+    }
     return sess.run(to_return, feed_dict)
 
   def run_eval_step(self, sess, batch):

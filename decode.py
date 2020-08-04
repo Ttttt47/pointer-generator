@@ -19,10 +19,15 @@
 import os
 import time
 import tensorflow as tf
+import numpy as np
+import pickle as pkl
 import beam_search
 import data
 import json
-import pyrouge
+
+
+import pyrouge  # comment this out if you have trouble installing ROUGE and only want to evaluate with loss function rather than ROUGE
+
 import util
 import logging
 import numpy as np
@@ -66,63 +71,84 @@ class BeamSearchDecoder(object):
     # Make the decode dir if necessary
     if not os.path.exists(self._decode_dir): os.mkdir(self._decode_dir)
 
-    if FLAGS.single_pass:
+    if FLAGS.single_pass and not FLAGS.extract_contextvec:
       # Make the dirs to contain output written in the correct format for pyrouge
       self._rouge_ref_dir = os.path.join(self._decode_dir, "reference")
       if not os.path.exists(self._rouge_ref_dir): os.mkdir(self._rouge_ref_dir)
       self._rouge_dec_dir = os.path.join(self._decode_dir, "decoded")
       if not os.path.exists(self._rouge_dec_dir): os.mkdir(self._rouge_dec_dir)
+    if FLAGS.single_pass and FLAGS.extract_contextvec:
+      self._contextvec_dir = os.path.join(self._decode_dir, "context_vector")
+      if not os.path.exists(self._contextvec_dir): os.mkdir(self._contextvec_dir)
 
 
   def decode(self):
     """Decode examples until data is exhausted (if FLAGS.single_pass) and return, or decode indefinitely, loading latest checkpoint at regular intervals"""
     t0 = time.time()
     counter = 0
-    while True:
-      batch = self._batcher.next_batch()  # 1 example repeated across batch
-      if batch is None: # finished decoding dataset in single_pass mode
-        assert FLAGS.single_pass, "Dataset exhausted, but we are not in single_pass mode"
-        tf.logging.info("Decoder has finished reading dataset for single_pass.")
-        tf.logging.info("Output has been saved in %s and %s. Now starting ROUGE eval...", self._rouge_ref_dir, self._rouge_dec_dir)
-        results_dict = rouge_eval(self._rouge_ref_dir, self._rouge_dec_dir)
-        rouge_log(results_dict, self._decode_dir)
-        return
 
-      original_article = batch.original_articles[0]  # string
-      original_abstract = batch.original_abstracts[0]  # string
-      original_abstract_sents = batch.original_abstracts_sents[0]  # list of strings
+    if FLAGS.extract_contextvec:
+      while True:
+        batch = self._batcher.next_batch()  # 1 example repeated across batch
+        if batch is None:  # finished decoding dataset in single_pass mode
+          assert FLAGS.single_pass, "Dataset exhausted, but we are not in single_pass mode"
+          tf.logging.info("Decoder has finished reading dataset for single_pass.")
+          tf.logging.info("Context vectors have been saved in %s.", self._decode_dir)
+          return
+        results = self._model.run_extract_contextvec_step(self._sess, batch)
+        if FLAGS.single_pass:
+          self.write_contextvec(results['context vectors'], counter)  # write context vector
+        else:
+          print('example %d decoded, of shape ' % counter, [i.shape for i in results['context vectors']])  # log output to screen
+          # print(results['context vectors'])
+        counter += 1  # this is how many examples we've decoded
 
-      article_withunks = data.show_art_oovs(original_article, self._vocab) # string
-      abstract_withunks = data.show_abs_oovs(original_abstract, self._vocab, (batch.art_oovs[0] if FLAGS.pointer_gen else None)) # string
+    else:
+      while True:
+        batch = self._batcher.next_batch()  # 1 example repeated across batch
+        if batch is None: # finished decoding dataset in single_pass mode
+          assert FLAGS.single_pass, "Dataset exhausted, but we are not in single_pass mode"
+          tf.logging.info("Decoder has finished reading dataset for single_pass.")
+          tf.logging.info("Output has been saved in %s and %s. Now starting ROUGE eval...", self._rouge_ref_dir, self._rouge_dec_dir)
+          results_dict = rouge_eval(self._rouge_ref_dir, self._rouge_dec_dir)
+          rouge_log(results_dict, self._decode_dir)
+          return
 
-      # Run beam search to get best Hypothesis
-      best_hyp = beam_search.run_beam_search(self._sess, self._model, self._vocab, batch)
+        original_article = batch.original_articles[0]  # string
+        original_abstract = batch.original_abstracts[0]  # string
+        original_abstract_sents = batch.original_abstracts_sents[0]  # list of strings
 
-      # Extract the output ids from the hypothesis and convert back to words
-      output_ids = [int(t) for t in best_hyp.tokens[1:]]
-      decoded_words = data.outputids2words(output_ids, self._vocab, (batch.art_oovs[0] if FLAGS.pointer_gen else None))
+        article_withunks = data.show_art_oovs(original_article, self._vocab) # string
+        abstract_withunks = data.show_abs_oovs(original_abstract, self._vocab, (batch.art_oovs[0] if FLAGS.pointer_gen else None)) # string
 
-      # Remove the [STOP] token from decoded_words, if necessary
-      try:
-        fst_stop_idx = decoded_words.index(data.STOP_DECODING) # index of the (first) [STOP] symbol
-        decoded_words = decoded_words[:fst_stop_idx]
-      except ValueError:
-        decoded_words = decoded_words
-      decoded_output = ' '.join(decoded_words) # single string
+        # Run beam search to get best Hypothesis
+        best_hyp = beam_search.run_beam_search(self._sess, self._model, self._vocab, batch)
 
-      if FLAGS.single_pass:
-        self.write_for_rouge(original_abstract_sents, decoded_words, counter) # write ref summary and decoded summary to file, to eval with pyrouge later
-        counter += 1 # this is how many examples we've decoded
-      else:
-        print_results(article_withunks, abstract_withunks, decoded_output) # log output to screen
-        self.write_for_attnvis(article_withunks, abstract_withunks, decoded_words, best_hyp.attn_dists, best_hyp.p_gens) # write info to .json file for visualization tool
+        # Extract the output ids from the hypothesis and convert back to words
+        output_ids = [int(t) for t in best_hyp.tokens[1:]]
+        decoded_words = data.outputids2words(output_ids, self._vocab, (batch.art_oovs[0] if FLAGS.pointer_gen else None))
 
-        # Check if SECS_UNTIL_NEW_CKPT has elapsed; if so return so we can load a new checkpoint
-        t1 = time.time()
-        if t1-t0 > SECS_UNTIL_NEW_CKPT:
-          tf.logging.info('We\'ve been decoding with same checkpoint for %i seconds. Time to load new checkpoint', t1-t0)
-          _ = util.load_ckpt(self._saver, self._sess)
-          t0 = time.time()
+        # Remove the [STOP] token from decoded_words, if necessary
+        try:
+          fst_stop_idx = decoded_words.index(data.STOP_DECODING) # index of the (first) [STOP] symbol
+          decoded_words = decoded_words[:fst_stop_idx]
+        except ValueError:
+          decoded_words = decoded_words
+        decoded_output = ' '.join(decoded_words) # single string
+
+        if FLAGS.single_pass:
+          self.write_for_rouge(original_abstract_sents, decoded_words, counter) # write ref summary and decoded summary to file, to eval with pyrouge later
+          counter += 1 # this is how many examples we've decoded
+        else:
+          print_results(article_withunks, abstract_withunks, decoded_output) # log output to screen
+          self.write_for_attnvis(article_withunks, abstract_withunks, decoded_words, best_hyp.attn_dists, best_hyp.p_gens) # write info to .json file for visualization tool
+
+          # Check if SECS_UNTIL_NEW_CKPT has elapsed; if so return so we can load a new checkpoint
+          t1 = time.time()
+          if t1-t0 > SECS_UNTIL_NEW_CKPT:
+            tf.logging.info('We\'ve been decoding with same checkpoint for %i seconds. Time to load new checkpoint', t1-t0)
+            _ = util.load_ckpt(self._saver, self._sess)
+            t0 = time.time()
 
   def write_for_rouge(self, reference_sents, decoded_words, ex_index):
     """Write output to file in correct format for eval with pyrouge. This is called in single_pass mode.
@@ -187,6 +213,16 @@ class BeamSearchDecoder(object):
     with open(output_fname, 'w') as output_file:
       json.dump(to_write, output_file)
     tf.logging.info('Wrote visualization data to %s', output_fname)
+
+  def write_contextvec(self, context_vectors, counter):
+    context_vectors_av = np.average(context_vectors, axis=0).flatten()
+
+    # Write to file
+    contextvec_file = os.path.join(self._contextvec_dir, "%06d_contextvec.pkl" % counter)
+
+    with open(contextvec_file, "w") as f:
+      pkl.dump(context_vectors_av, f)
+    tf.logging.info("Wrote example %i to file" % counter)
 
 
 def print_results(article, abstract, decoded_output):

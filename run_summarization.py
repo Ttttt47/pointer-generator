@@ -38,6 +38,7 @@ tf.app.flags.DEFINE_string('vocab_path', '', 'Path expression to text vocabulary
 # Important settings
 tf.app.flags.DEFINE_string('mode', 'train', 'must be one of train/eval/decode')
 tf.app.flags.DEFINE_boolean('single_pass', False, 'For decode mode only. If True, run eval on the full dataset using a fixed checkpoint, i.e. take the current checkpoint, and use it to produce one summary for each example in the dataset, write the summaries to file and then get ROUGE scores for the whole dataset. If False (default), run concurrent decoding, i.e. repeatedly load latest checkpoint, use it to produce summaries for randomly-chosen examples and log the results to screen, indefinitely.')
+tf.app.flags.DEFINE_boolean('extract_contextvec', False, 'For decode only, If True, run encoder to get context vectors')
 
 # Where to save output
 tf.app.flags.DEFINE_string('log_root', '', 'Root directory for all logging.')
@@ -215,6 +216,10 @@ def run_training(model, batcher, sess_context_manager, sv, summary_writer):
       if train_step % 100 == 0: # flush the summary writer every so often
         summary_writer.flush()
 
+# def extract_contextvec(model, batcher, vocab):
+#   model.build_graph()
+#   sess = tf.Session(config=util.get_config())
+#
 
 def run_eval(model, batcher, vocab):
   """Repeatedly runs eval iterations, logging to screen and writing summaries. Saves the model with the best loss seen so far."""
@@ -284,9 +289,10 @@ def main(unused_argv):
   # If in decode mode, set batch_size = beam_size
   # Reason: in decode mode, we decode one example at a time.
   # On each step, we have beam_size-many hypotheses in the beam, so we need to make a batch of these hypotheses.
-  if FLAGS.mode == 'decode':
+  if FLAGS.mode == 'decode' and not FLAGS.extract_contextvec:
     FLAGS.batch_size = FLAGS.beam_size
-
+  if FLAGS.mode == 'decode' and FLAGS.extract_contextvec:
+    FLAGS.batch_size = 1  # process 1 example at a time.
   # If single_pass=True, check we're in decode mode
   if FLAGS.single_pass and FLAGS.mode!='decode':
     raise Exception("The single_pass flag should only be True in decode mode")
@@ -313,7 +319,8 @@ def main(unused_argv):
     run_eval(model, batcher, vocab)
   elif hps.mode == 'decode':
     decode_model_hps = hps  # This will be the hyperparameters for the decoder model
-    decode_model_hps = hps._replace(max_dec_steps=1) # The model is configured with max_dec_steps=1 because we only ever run one step of the decoder at a time (to do beam search). Note that the batcher is initialized with max_dec_steps equal to e.g. 100 because the batches need to contain the full summaries
+    if not FLAGS.extract_contextvec:
+      decode_model_hps = hps._replace(max_dec_steps=1) # The model is configured with max_dec_steps=1 because we only ever run one step of the decoder at a time (to do beam search). Note that the batcher is initialized with max_dec_steps equal to e.g. 100 because the batches need to contain the full summaries
     model = SummarizationModel(decode_model_hps, vocab)
     decoder = BeamSearchDecoder(model, batcher, vocab)
     decoder.decode() # decode indefinitely (unless single_pass=True, in which case deocde the dataset exactly once)
