@@ -1,8 +1,16 @@
-*Note: this code is no longer actively maintained. However, feel free to use the Issues section to discuss the code with other users. Some users have updated this code for newer versions of Tensorflow and Python - see information below and Issues section.*
+*Note: this branch add extract_contextvec flag to extract the context vector produced by the encoder. You need `pickle` package to save and load the results*
 
 ---
 
 This repository contains code for the ACL 2017 paper *[Get To The Point: Summarization with Pointer-Generator Networks](https://arxiv.org/abs/1704.04368)*. For an intuitive overview of the paper, read the [blog post](http://www.abigailsee.com/2017/04/16/taming-rnns-for-better-summarization.html).
+
+## Extract context vector
+
+To run extracting context vectors:
+```
+python run_summarization.py --mode=decode --data_path=/path/to/chunked/test_* --vocab_path=/path/to/vocab --log_root=/path/to/a/log/directory --exp_name=myexperiment --single_pass=True --extract_contextvec=1
+```
+This will create a folder `context_vector/` in `./log/yourmodel/`(the same folder that you use decode mode to evaluate the result by pyrouge) and store the extracted context vectors in it.
 
 ## Instructions on optimize the hyperparameter
 * You need `tensorflow==1.0.0` and `python2.7` to train the model and `pyrouge` and `ROUGE` to evaluate the results.
