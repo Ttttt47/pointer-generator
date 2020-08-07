@@ -133,7 +133,9 @@ def main():
 	while os.path.exists('path/to/context_vector/%06d_contextvec.pkl' % counter):
 	    with open('path/to/context_vector/%06d_contextvec.pkl' % counter, 'r') as f:
 	        x = pkl.load(f) 
-	    # do some clustering with x here...
+	    # remain to be finished
+	    # call the TFKMeansCluster function
+	    
 	    counter += 1
 	print(counter)
 
